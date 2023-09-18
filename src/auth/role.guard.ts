@@ -7,25 +7,27 @@ import { UserRole } from "src/user/user-roles.enum";
 export class RoleGuard implements CanActivate {
     constructor(
         private reflector: Reflector
-    ){}
+    ) { }
     canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
         const requiredRoles = this.reflector.get<UserRole[]>('roles', context.getHandler());
         if (!requiredRoles) {
             return true;
         }
-    const request = context.switchToHttp().getRequest();
-    const user = request.user;
-    if (!user) {
-      return false; // User not authenticated, deny access
+        const request = context.switchToHttp().getRequest();
+        const user = request.user;
+        if (!user) {
+            return false; // User not authenticated, deny access
+        }
+        console.log(user, "user.role");
+
+        const hasRequiredRole = requiredRoles.some(role => role === user.Role);
+        console.log(hasRequiredRole);
+
+        if (!hasRequiredRole) {
+            throw new UnauthorizedException(`Requird role:`)
+        }
+        return hasRequiredRole;
     }
-     const hasRequiredRole = requiredRoles.some(role => role === user.role);
-     console.log(hasRequiredRole);
-     
-    if(!hasRequiredRole) {
-        throw new UnauthorizedException(`Requird role:`)
-    }
-    return hasRequiredRole;
-    }
-    
-    
+
+
 }

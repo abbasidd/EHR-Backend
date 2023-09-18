@@ -1,122 +1,185 @@
-import { Body, Controller, Get, Param, Post, UploadedFile, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, UploadedFile, UseGuards, UseInterceptors, UsePipes, ValidationPipe } from '@nestjs/common';
 import { IntegrationService } from './integration.service';
 import { LocalAuthGuard } from 'src/auth/auth.guard';
 import { RoleGuard } from 'src/auth/role.guard';
+import { AddDiagnosis } from './dto/integration.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { IpfsService } from 'src/ipfs/ipfs.service';
+import { ethers } from 'ethers';
+import { Roles } from 'src/auth/roles.decorator';
+import { UserRole } from 'src/user/user-roles.enum';
 
 @Controller('EHR')
 export class IntegrationController {
-    constructor(private readonly integrationService: IntegrationService) { }
 
-    @Get('getblock/:blocknumber')
-    // @UseGuards(RoleGuard, LocalAuthGuard)
-    async getBlockNumber(@Param('BlockNumber') blockNumber: number) {
-        return this.integrationService.getBlockByNumber(blockNumber)
-    }
-    @Get('getDiagnoses/: address')
-    async getdiagnoses(@Param('address') address: string) {
-        return this.integrationService.getdiagnosis(address);
-    }
-    @Post('add-diagnoses')
-    async addDiagnoses(@Body() requestBody: { adminprivateKey: string, diagnosescode: string }) {
-        const { adminprivateKey, diagnosescode } = requestBody;
-        await this.integrationService.addDiagnosis(diagnosescode, adminprivateKey)
+    constructor(private readonly integrationService: IntegrationService,
+        private readonly ipfsService: IpfsService) { }
+
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Post('add-diagnosis/:patientID')
+    @UsePipes(new ValidationPipe({ transform: true }))
+    async addDiagnoses(@Body() requestBody: AddDiagnosis, @Param('patientID') patientID: string) {
+        const { code, description } = requestBody;
+        try {
+            await this.integrationService.addDiagnosis(code, description, patientID)
+        }
+        catch (error) {
+            throw new NotFoundException(`Item with ID not found`);
+        }
         return { message: 'Dianosis added successfilly' };
     }
-    @Post('set-physical-finding')
-    async setPhysicalFinding(@Body() requestBody: any) {
+
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Get('get-diagnosis/:patientID')
+    async getDiagnoses(@Param('patientID') patientID: string) {
         try {
-            const { adminprivateKey, date, value1, value2 } = requestBody;
-            await this.integrationService.setphysicalFinding(adminprivateKey, date, value1, value2);
+            const diagnoses = await this.integrationService.getdiagnosis(patientID)
+            return diagnoses;
+        }
+        catch (error) {
+            throw new NotFoundException(`Item with ID not found`);
+        }
+    }
+
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Post('add-physical-examination/:patientID')
+    async setPhysicalFinding(@Body() requestBody: any, @Param('patientID') patientID: string) {
+        try {
+            const { date, time, height, weight, pulseRate, bloodPressure, bodySurfaceArea } = requestBody;
+            await this.integrationService.addphysicalExamination(date, time, height, weight, pulseRate, bloodPressure, bodySurfaceArea, patientID);
             return { message: 'Physical finding set successfully' };
         } catch (error) {
             console.log(error);
             throw new Error("Error setting physical finding");
         }
     }
-    @Post('add-operation-record')
-    async addOperationRecord(@Body() requestBody: any) {
-        try {
-            const { adminprivateKey, date, field1, field2 } = requestBody;
-            await this.integrationService.addOperationRecord(adminprivateKey, date, field1, field2);
-            return { message: 'Operation record added successfully' }
-        } catch (error) {
-            console.log(error);
-            throw new Error('Error adding Operation Record')
-        }
-    }
-    //  http://localhost:3000/ehr/physical-finding/:patientAddress
-    @Get('operation/:date')
-    async getOperationRecord(@Param('date') patientAddress: string) {
-        return this.integrationService.getOperationRecord(patientAddress);
-    }
-    @Post('add-laboratory-test')
-    async addLaboratoryTest(@Body() requestBoby: any) {
-        try {
-            const { adminprivateKey, date, testOrder, testCode, testName } = requestBoby;
-            await this.integrationService.addLaboratoryTest(adminprivateKey, date, testOrder, testCode, testName);
-            return { message: 'Laboratory test Added successfully' }
-        } catch (error) {
-            console.log(error);
-            throw new Error("Error adding Laboratory test");
-        }
-    }
-    @Get('laboratory/:patientAddress')
-    async getLaboratoryTest(@Param('date') patientAddress : string) {
-        return this.integrationService.getLaboratoryTest(patientAddress);
-    }
-    @Post('add-medication-injection')
-    async addMedicationInjection(@Body() requestBody: any) {
-        try {
-            const { adminprivateKey, injectionType, date, medication, administered, timestamp } = requestBody;
-            await this.integrationService.addMedicationInjection(adminprivateKey, injectionType, date, medication, administered, timestamp)
-            return { message: "Medication injection added successfully" };
 
-        } catch (error) {
-            console.log(error);
-            throw new Error("Error adding medication injection  ");
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Get('get-physical-examination/:patientID')
+    async getPhysicalExamination(@Param('patientID') patientID: string) {
+        try {
+            const diagnoses = await this.integrationService.getphysicalExamination(patientID)
+            return diagnoses;
+        }
+        catch (error) {
+            throw new NotFoundException(`Item with ID not found`);
         }
     }
-    @Get('getMedicationInjections/:patientAddress')
-    async getMedicationInjections(@Param('patientAddress') patientAddress: string) {
-        return this.integrationService.getMedicationInjection(patientAddress);
-    }
-    @Post('add-other-treatment')
-    async addOtherTreatment(@Body() requestBody: any) {
+
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Post('add-surgical-operation/:patientID')
+    async addOperationRecord(@Body() requestBody: any, @Param('patientID') patientID: string) {
+        // async addOperationRecord(@Body() requestBody: any) {
         // try {
-            const { adminprivateKey, treatmentCategory, startDate, endDate, } = requestBody
-            await this.integrationService.addOtherTreatment(adminprivateKey, treatmentCategory, startDate, endDate)
-            return { message: "Other trearment added sucessfully" }
+        const { operationDate, operationCodeICD9CM, techniqueName, bleedingVolume, bloodTransfusionVolume, urineVolume, operationNotes } = requestBody;
+        console.log(operationDate, operationCodeICD9CM, techniqueName, bleedingVolume, bloodTransfusionVolume, urineVolume, operationNotes, patientID);
 
+        await this.integrationService.addSurgicalOperation(operationDate, operationCodeICD9CM, techniqueName, bleedingVolume, bloodTransfusionVolume, urineVolume, operationNotes, patientID);
+        return { message: 'Operation record added successfully' }
         // } catch (error) {
         //     console.log(error);
-        //     throw new Error('Error adding other trearment');
+        //     throw new Error('Error adding Operation Record')
         // }
     }
-    @Get('getOtherTreatments/:patientAddress')
-    async getOtherTreatments(@Param('patientAddress') patientAddress: string) {
-        const data = this.integrationService.getOtherTreatment(patientAddress);
-        console.log(data, "data..................");
-        return data
-    }
-    @Post('add-diagnostic-study')
-    async addDiagnosesStudy(@Body() requestBoby: any) {
+
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Get('get-surgical-operation/:patientID')
+    async getSurgicalOperation(@Param('patientID') patientID: string) {
         // try {
-        const { adminprivateKey, orderNumber, subCategory } = requestBoby;
-        await this.integrationService.addDiagnosesStudy(adminprivateKey, orderNumber, subCategory)
-        return { message: 'Diagnoses study added sucessfully' };
-        // } catch (error) {
-        //     throw new Error('Error adding diagnoses study')
+        const surgicalOperations = await this.integrationService.getSurgicalOperation(patientID)
+        return surgicalOperations;
+        // }
+        // catch (error) {
+        //     throw new NotFoundException(`Item with ID not found`);
         // }
     }
-    @Get('diagnostic-study/:patientAddress')
-    async getDianosticStudy(@Param("PatientAddress") patientAddres: string) {
-        const data = this.integrationService.getDiagnosticStudies(patientAddres)
-        console.log(data, "data_data_data.................");
-        return data
+
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Post('add-lab-test/:patientID')
+    async addLabRecord(@Body() requestBody: any, @Param('patientID') patientID: string) {
+        // async addOperationRecord(@Body() requestBody: any) {
+        // try { ,testDate ,labTestCode ,labTestName
+        const { testDate, labTestCode, labTestName } = requestBody;
+        // console.log(operationDate, operationCodeICD9CM, techniqueName, bleedingVolume, bloodTransfusionVolume, urineVolume, operationNotes, patientID);
+
+        await this.integrationService.addLabTestResult(testDate, labTestCode, labTestName, patientID);
+        return { message: 'Operation record added successfully' }
+        // } catch (error) {
+        //     console.log(error);
+        //     throw new Error('Error adding Operation Record')
+        // }
     }
 
-    
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Get('get-lab-test/:patientID')
+    async getLabRecord(@Param('patientID') patientID: string) {
+        // try { ,testDate ,labTestCode ,labTestName,orderNumber,category,date
+        const surgicalOperations = await this.integrationService.getLabTestResult(patientID)
+        // await this.integrationService.addOtherTreatmentRecord(orderNumber, category, date, patientID);
+        return surgicalOperations;
+        // } catch (error) {
+        //     console.log(error);
+        //     throw new Error('Error adding Operation Record')
+        // }
+    }
 
-  
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Post('add-other-treatment/:patientID')
+    async addOtherTreatment(@Body() requestBody: any, @Param('patientID') patientID: string) {
+        // try { ,testDate ,labTestCode ,labTestName,orderNumber,category,date
+        const { orderNumber, category, date } = requestBody;
+        await this.integrationService.addOtherTreatmentRecord(orderNumber, category, date, patientID);
+        return { message: 'Operation record added successfully' }
+        // } catch (error) {
+        //     console.log(error);
+        //     throw new Error('Error adding Operation Record')
+        // }
+    }
 
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @Get('get-other-treatment/:patientID')
+    async getOtherTreatment(@Param('patientID') patientID: string) {
+        // try { ,testDate ,labTestCode ,labTestName,orderNumber,category,date
+        const surgicalOperations = await this.integrationService.getOtherTreatmentRecord(patientID)
+        // await this.integrationService.addOtherTreatmentRecord(orderNumber, category, date, patientID);
+        return surgicalOperations;
+        // } catch (error) {
+        //     console.log(error);
+        //     throw new Error('Error adding Operation Record')
+        // }
+    }
+
+
+    @UseGuards(LocalAuthGuard, RoleGuard)
+    @Roles(UserRole.Admin)
+    @UseInterceptors(FileInterceptor('file'))
+    @Post('add-reports-ipfs/:patientID')
+    async addReportsIpfs(@Body() requestBody: any, @Param('patientID') patientID: string, @UploadedFile() file) {
+
+        if (!file) {
+            return { message: 'No file uploaded' };
+        }
+        console.log(file, "file");
+
+        // try { ,testDate ,labTestCode ,labTestName,orderNumber,category,date
+        const { type } = requestBody;
+        const ipfsHash = await this.ipfsService.uploadFile(file.buffer, file.originalname);
+
+        await this.integrationService.addFileToIPFS(patientID, ipfsHash, type);
+        return { message: 'Operation record added successfully', ipfsHash: ipfsHash }
+        // } catch (error) {
+        //     console.log(error);
+        //     throw new Error('Error adding Operation Record')
+        // }
+    }
 }
